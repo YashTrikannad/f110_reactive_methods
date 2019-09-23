@@ -52,27 +52,34 @@ public:
     /// @param filtered_ranges vector of max gap ranges
     /// @param start_index start index of max_gap_ranges in the filtered_ranges
     /// @param end_index end index of max_gap_ranges in the filtered_ranges
-    /// @return return undex of the Max Element in the Vector
+    /// @return return index of the Max Element in the Vector
     size_t get_best_point(const std::vector<double>& filtered_ranges, int start_index, int end_index) const
     {
-        std::vector<double> max_gap =
-                std::vector<double>(filtered_ranges.begin()+start_index, filtered_ranges.end()+end_index);
-        return fgm::maximum_element_index(max_gap) + start_index;
+        return (start_index + end_index)/2;
     }
 
     /// Calculates the required steering angle based on the angles of the best point and the current heading of vehicle
     /// @param scan_msg - Scan Msg received by the callback
     /// @param best_point_index - The best point for heading as per FGM algorithm
     /// @return required steering angle
-    size_t get_steering_angle(const sensor_msgs::LaserScan::ConstPtr &scan_msg, const size_t best_point_index) const
+    double get_steering_angle_from_range_index(const sensor_msgs::LaserScan::ConstPtr &scan_msg,
+                                               const size_t best_point_index)
     {
-        std::cout << static_cast<double>(truncated_start_index_ + best_point_index) << "\n";
-        std::cout << scan_msg->angle_increment << "\n";
-        std::cout << scan_msg->angle_increment*
-        static_cast<double>(truncated_start_index_ + best_point_index) << "\n";
-        const auto best_point_steering_angle = scan_msg->angle_increment*
-                static_cast<double>(truncated_start_index_ + best_point_index);
-        return best_point_steering_angle;
+        const size_t best_point_index_input_scan_frame = truncated_start_index_ + best_point_index;
+        // Case When Steering Angle is to be negative
+        if(best_point_index_input_scan_frame < scan_msg->ranges.size()/2)
+        {
+            const auto best_point_steering_angle = - scan_msg->angle_increment*
+                               static_cast<double>(scan_msg->ranges.size()/2.0 - best_point_index_input_scan_frame);
+            return best_point_steering_angle;
+        }
+            // Case When Steering Angle is to be negative
+        else
+        {
+            const auto best_point_steering_angle = scan_msg->angle_increment*
+                               static_cast<double>(best_point_index_input_scan_frame - scan_msg->ranges.size()/2.0);
+            return best_point_steering_angle;
+        }
     }
 
     /// Process each LiDAR scan as per the Follow Gap algorithm & publish an AckermannDriveStamped Message
@@ -81,43 +88,53 @@ public:
     {
         if(!truncated_)
         {
+            ROS_INFO("input scan start angle = %f", scan_msg->angle_min);
+            ROS_INFO("input scan end angle = %f", scan_msg->angle_max);
+            ROS_INFO("input scan start index = %u", 0);
+            ROS_INFO("input scan end index = %u", static_cast<u_int>(scan_msg->ranges.size()));
+
             const auto truncated_indices =
                     fgm::truncated_start_and_end_indices(scan_msg, truncated_coverage_angle_);
             truncated_start_index_ = truncated_indices.first;
             truncated_end_index_ = truncated_indices.second;
-            std::cout << "truncated start index: " << truncated_start_index_ << "\n";
-            std::cout << "truncated end index: " << truncated_end_index_ << "\n";
+            truncated_ = true;
+
+            ROS_INFO("truncated scan start angle = %f", -truncated_coverage_angle_/2);
+            ROS_INFO("truncated scan end angle = %f", truncated_coverage_angle_/2);
+            ROS_INFO("truncated start index = %u", static_cast<u_int>(truncated_start_index_));
+            ROS_INFO("truncated end index = %u", static_cast<u_int>(truncated_end_index_));
         }
 
         // Pre-Process (zero out nans and Filter)
         auto filtered_ranges = preprocess_lidar_scan(scan_msg);
-        std::cout << "Created Filtered Ranges \n";
+        ROS_DEBUG("Created Filtered Ranges");
 
         // find the closest point to LiDAR
         const size_t closest_index = fgm::minimum_element_index(filtered_ranges);
-        std::cout << "Closest Point Index is: " << closest_index + truncated_start_index_ << "\n";
-        std::cout << "Closest Point Value is: " << filtered_ranges[closest_index] << "\n";
+        ROS_DEBUG("Closest Point Index = %u", static_cast<u_int>(closest_index + truncated_start_index_));
+        ROS_DEBUG("Closest Point Value = %f", filtered_ranges[closest_index]);
 
         // Eliminate all points inside 'bubble' (set them to zero)
         fgm::zero_out_safety_bubble(&filtered_ranges, closest_index, bubble_radius_);
-        std::cout << "Zeroed out the Bubble Region \n";
+        ROS_DEBUG("Zeroed out the Bubble Region");
 
         // Find max length gap
         const auto [start_index, end_index] = fgm::find_largest_nonzero_sequence(filtered_ranges);
-        std::cout << "Max Gap Start Index: " << start_index << " Max Gap End Index " << end_index << "\n";
+        ROS_DEBUG("Max Gap Start Index = %u", static_cast<u_int>(start_index + truncated_start_index_));
+        ROS_DEBUG("Max Gap End Index = %u", static_cast<u_int>(end_index + truncated_start_index_));
 
         // Find the best point in the gap
         const size_t best_point_index = get_best_point(filtered_ranges, start_index, end_index);
-        std::cout << "Best Point" << best_point_index + truncated_start_index_ <<"\n";
+        ROS_DEBUG("Best Point = %u", static_cast<u_int>(best_point_index + truncated_start_index_ ));
 
-        const double steering_angle = get_steering_angle(scan_msg, best_point_index);
-        std::cout << "Steering Angle: " << steering_angle <<"\n";
+        const double steering_angle = get_steering_angle_from_range_index(scan_msg, best_point_index);
+        ROS_DEBUG("Publish Steering Angle = %f", steering_angle);
 
         // Publish Drive message
         ackermann_msgs::AckermannDriveStamped drive_msg;
         drive_msg.header.stamp = ros::Time::now();
         drive_msg.header.frame_id = "laser";
-        drive_msg.drive.steering_angle = -steering_angle;
+        drive_msg.drive.steering_angle = steering_angle/4;
         if(abs(steering_angle) > 0.349)
         {
             drive_msg.drive.speed = error_based_velocities_["high"];

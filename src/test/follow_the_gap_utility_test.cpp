@@ -5,6 +5,7 @@
 #include "f110_reactive_methods/utility.h"
 
 #include <gtest/gtest.h>
+#include <ros/ros.h>
 
 TEST(find_largest_nonzero_sequence, check_functionality)
 {
@@ -139,6 +140,11 @@ TEST(zero_out_bubble, check_functionality)
                      0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
     fgm::zero_out_safety_bubble(&test_vector, 20, 0.5);
     EXPECT_EQ(test_vector, output_vector);
+}
+
+TEST(get_steering_angle_from_range_index, check_functionality)
+{
+
 }
 
 int main(int argc, char **argv)

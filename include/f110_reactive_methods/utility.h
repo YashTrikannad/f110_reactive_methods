@@ -40,7 +40,6 @@ std::vector<double> apply_smoothing_filter(const std::vector<double>& input_vect
 std::pair<size_t, size_t> truncated_start_and_end_indices(const sensor_msgs::LaserScan::ConstPtr &scan_msg,
         const double truncation_angle_coverage)
 {
-    std::cout << scan_msg->ranges.size() << " min: " << scan_msg->angle_min << " max: " << scan_msg->angle_max << "\n";
     const auto truncated_range_size = static_cast<size_t >(
             (truncation_angle_coverage/(scan_msg->angle_max - scan_msg->angle_min))*scan_msg->ranges.size());
     const size_t start_index = (scan_msg->ranges.size()/2) - (truncated_range_size/2);
