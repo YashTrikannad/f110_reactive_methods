@@ -20,6 +20,7 @@ public:
         node_handle_.getParam("/velocity", velocity_);
         node_handle_.getParam("/max_accepted_distance", max_accepted_distance_);
         node_handle_.getParam("/error_based_velocities", error_based_velocities_);
+        node_handle_.getParam("/steering_angle_reactivity", steering_angle_reactivity_);
     }
 
     /// PreProcess Lidar Scan to replace nans by zeros and find the closest point in the lidar scan
@@ -63,23 +64,28 @@ public:
     /// @param best_point_index - The best point for heading as per FGM algorithm
     /// @return required steering angle
     double get_steering_angle_from_range_index(const sensor_msgs::LaserScan::ConstPtr &scan_msg,
-                                               const size_t best_point_index)
+                                               const size_t best_point_index,
+                                               const double closest_value)
     {
         const size_t best_point_index_input_scan_frame = truncated_start_index_ + best_point_index;
+        double best_point_steering_angle;
         // Case When Steering Angle is to be negative
         if(best_point_index_input_scan_frame < scan_msg->ranges.size()/2)
         {
-            const auto best_point_steering_angle = - scan_msg->angle_increment*
+            best_point_steering_angle = - scan_msg->angle_increment*
                                static_cast<double>(scan_msg->ranges.size()/2.0 - best_point_index_input_scan_frame);
-            return best_point_steering_angle;
         }
             // Case When Steering Angle is to be negative
         else
         {
-            const auto best_point_steering_angle = scan_msg->angle_increment*
+            best_point_steering_angle = scan_msg->angle_increment*
                                static_cast<double>(best_point_index_input_scan_frame - scan_msg->ranges.size()/2.0);
-            return best_point_steering_angle;
         }
+        ROS_DEBUG("closest_value %f" , closest_value);
+        const auto distance_compensated_steering_angle =
+                std::clamp((best_point_steering_angle*steering_angle_reactivity_)/
+                static_cast<double>(closest_value), -1.57, 1.57);
+        return distance_compensated_steering_angle;
     }
 
     /// Process each LiDAR scan as per the Follow Gap algorithm & publish an AckermannDriveStamped Message
@@ -112,6 +118,8 @@ public:
         // find the closest point to LiDAR
         const size_t closest_index = fgm::minimum_element_index(filtered_ranges);
         ROS_DEBUG("Closest Point Index = %u", static_cast<u_int>(closest_index + truncated_start_index_));
+
+        const auto closest_range = filtered_ranges[closest_index];
         ROS_DEBUG("Closest Point Value = %f", filtered_ranges[closest_index]);
 
         // Eliminate all points inside 'bubble' (set them to zero)
@@ -127,14 +135,14 @@ public:
         const size_t best_point_index = get_best_point(filtered_ranges, start_index, end_index);
         ROS_DEBUG("Best Point = %u", static_cast<u_int>(best_point_index + truncated_start_index_ ));
 
-        const double steering_angle = get_steering_angle_from_range_index(scan_msg, best_point_index);
+        const double steering_angle = get_steering_angle_from_range_index(scan_msg, best_point_index, closest_range);
         ROS_DEBUG("Publish Steering Angle = %f", steering_angle);
 
         // Publish Drive message
         ackermann_msgs::AckermannDriveStamped drive_msg;
         drive_msg.header.stamp = ros::Time::now();
         drive_msg.header.frame_id = "laser";
-        drive_msg.drive.steering_angle = steering_angle/4;
+        drive_msg.drive.steering_angle = steering_angle;
         if(abs(steering_angle) > 0.349)
         {
             drive_msg.drive.speed = error_based_velocities_["high"];
@@ -158,6 +166,7 @@ private:
     double bubble_radius_;
     double max_accepted_distance_;
     double smoothing_filter_size_;
+    double steering_angle_reactivity_;
 
     bool truncated_;
     double truncated_coverage_angle_;
